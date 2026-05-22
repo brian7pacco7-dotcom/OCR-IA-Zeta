@@ -80,8 +80,8 @@ jobs:
                   applicationId 'com.geozeta.ocria'
                   minSdk 23
                   targetSdk 35
-                  versionCode 1
-                  versionName '1.0'
+                  versionCode 2
+                  versionName '1.1'
                   buildConfigField "String", "GEMINI_API_KEY", "\"${geminiKey}\""
               }
 
@@ -158,7 +158,6 @@ jobs:
           import android.content.ClipboardManager;
           import android.content.Context;
           import android.content.Intent;
-          import android.content.pm.PackageManager;
           import android.graphics.Bitmap;
           import android.graphics.ImageDecoder;
           import android.net.Uri;
@@ -411,7 +410,7 @@ jobs:
                   }
 
                   if (BuildConfig.GEMINI_API_KEY == null || BuildConfig.GEMINI_API_KEY.trim().isEmpty()) {
-                      answerText.setText("La app ya tiene OCR, pero falta configurar la clave GEMINI_API_KEY en GitHub Secrets para que responda la IA. La IA necesita internet.");
+                      answerText.setText("Falta configurar GEMINI_API_KEY en GitHub Secrets para que responda la IA.");
                       return;
                   }
 
@@ -430,12 +429,13 @@ jobs:
 
               private String callGemini(String userText) {
                   try {
-                      String endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + BuildConfig.GEMINI_API_KEY;
+                      String endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + BuildConfig.GEMINI_API_KEY;
 
                       String prompt =
                               "Responde en español, claro, directo y útil. " +
                               "Si el texto es una pregunta, responde directo. " +
                               "Si es un ejercicio, muestra procedimiento corto y resultado. " +
+                              "Si hay alternativas, indica la alternativa correcta. " +
                               "Si el texto está borroso, incompleto o no se entiende, dilo sin inventar. " +
                               "Texto OCR: " + userText;
 
@@ -483,7 +483,22 @@ jobs:
 
                       JSONObject json = new JSONObject(sb.toString());
 
-                      return json.getJSONArray("candidates")
+                      if (json.has("error")) {
+                          JSONObject error = json.getJSONObject("error");
+                          return "Error de Gemini: " + error.optString("message", "Revisa la clave API o el modelo.");
+                      }
+
+                      if (!json.has("candidates")) {
+                          return "Gemini no devolvió respuesta. Revisa que la clave API esté activa y que tengas internet.";
+                      }
+
+                      JSONArray candidates = json.getJSONArray("candidates");
+
+                      if (candidates.length() == 0) {
+                          return "Gemini no generó respuesta. Intenta con una imagen más clara o una pregunta más corta.";
+                      }
+
+                      return candidates
                               .getJSONObject(0)
                               .getJSONObject("content")
                               .getJSONArray("parts")
