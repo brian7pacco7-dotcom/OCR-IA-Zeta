@@ -70,7 +70,7 @@ jobs:
               id 'com.android.application'
           }
 
-          def geminiKey = System.getenv("GEMINI_API_KEY") ?: ""
+          def openaiKey = System.getenv("OPENAI_API_KEY") ?: ""
 
           android {
               namespace 'com.geozeta.ocria'
@@ -80,9 +80,9 @@ jobs:
                   applicationId 'com.geozeta.ocria'
                   minSdk 23
                   targetSdk 35
-                  versionCode 2
-                  versionName '1.1'
-                  buildConfigField "String", "GEMINI_API_KEY", "\"${geminiKey}\""
+                  versionCode 3
+                  versionName '1.2'
+                  buildConfigField "String", "OPENAI_API_KEY", "\"${openaiKey}\""
               }
 
               buildFeatures {
@@ -229,7 +229,7 @@ jobs:
                   root.addView(title);
 
                   TextView subtitle = new TextView(this);
-                  subtitle.setText("Foto o imagen → OCR → respuesta con IA");
+                  subtitle.setText("Foto o imagen → OCR → respuesta con OpenAI");
                   subtitle.setTextSize(15);
                   subtitle.setGravity(Gravity.CENTER);
                   subtitle.setTextColor(0xFF444444);
@@ -409,8 +409,8 @@ jobs:
                       return;
                   }
 
-                  if (BuildConfig.GEMINI_API_KEY == null || BuildConfig.GEMINI_API_KEY.trim().isEmpty()) {
-                      answerText.setText("Falta configurar GEMINI_API_KEY en GitHub Secrets para que responda la IA.");
+                  if (BuildConfig.OPENAI_API_KEY == null || BuildConfig.OPENAI_API_KEY.trim().isEmpty()) {
+                      answerText.setText("Falta configurar OPENAI_API_KEY en GitHub Secrets para que responda la IA.");
                       return;
                   }
 
@@ -418,7 +418,7 @@ jobs:
                   answerText.setText("Pensando...");
 
                   new Thread(() -> {
-                      String response = callGemini(text);
+                      String response = callOpenAI(text);
 
                       runOnUiThread(() -> {
                           progress.setVisibility(View.GONE);
@@ -427,9 +427,9 @@ jobs:
                   }).start();
               }
 
-              private String callGemini(String userText) {
+              private String callOpenAI(String userText) {
                   try {
-                      String endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + BuildConfig.GEMINI_API_KEY;
+                      String endpoint = "https://api.openai.com/v1/responses";
 
                       String prompt =
                               "Responde en español, claro, directo y útil. " +
@@ -439,25 +439,16 @@ jobs:
                               "Si el texto está borroso, incompleto o no se entiende, dilo sin inventar. " +
                               "Texto OCR: " + userText;
 
-                      JSONObject part = new JSONObject();
-                      part.put("text", prompt);
-
-                      JSONArray parts = new JSONArray();
-                      parts.put(part);
-
-                      JSONObject content = new JSONObject();
-                      content.put("parts", parts);
-
-                      JSONArray contents = new JSONArray();
-                      contents.put(content);
-
                       JSONObject body = new JSONObject();
-                      body.put("contents", contents);
+                      body.put("model", "gpt-4.1-mini");
+                      body.put("input", prompt);
+                      body.put("max_output_tokens", 500);
 
                       URL url = new URL(endpoint);
                       HttpURLConnection connection = (HttpURLConnection) url.openConnection();
                       connection.setRequestMethod("POST");
                       connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+                      connection.setRequestProperty("Authorization", "Bearer " + BuildConfig.OPENAI_API_KEY);
                       connection.setDoOutput(true);
                       connection.setConnectTimeout(20000);
                       connection.setReadTimeout(30000);
@@ -485,29 +476,37 @@ jobs:
 
                       if (json.has("error")) {
                           JSONObject error = json.getJSONObject("error");
-                          return "Error de Gemini: " + error.optString("message", "Revisa la clave API o el modelo.");
+                          return "Error de OpenAI: " + error.optString("message", "Revisa tu clave API o saldo.");
                       }
 
-                      if (!json.has("candidates")) {
-                          return "Gemini no devolvió respuesta. Revisa que la clave API esté activa y que tengas internet.";
+                      if (json.has("output_text")) {
+                          return json.getString("output_text").trim();
                       }
 
-                      JSONArray candidates = json.getJSONArray("candidates");
+                      if (json.has("output")) {
+                          JSONArray output = json.getJSONArray("output");
 
-                      if (candidates.length() == 0) {
-                          return "Gemini no generó respuesta. Intenta con una imagen más clara o una pregunta más corta.";
+                          for (int i = 0; i < output.length(); i++) {
+                              JSONObject item = output.getJSONObject(i);
+
+                              if (item.has("content")) {
+                                  JSONArray content = item.getJSONArray("content");
+
+                                  for (int j = 0; j < content.length(); j++) {
+                                      JSONObject c = content.getJSONObject(j);
+
+                                      if (c.has("text")) {
+                                          return c.getString("text").trim();
+                                      }
+                                  }
+                              }
+                          }
                       }
 
-                      return candidates
-                              .getJSONObject(0)
-                              .getJSONObject("content")
-                              .getJSONArray("parts")
-                              .getJSONObject(0)
-                              .getString("text")
-                              .trim();
+                      return "OpenAI respondió, pero la app no pudo leer el texto de respuesta.";
 
                   } catch (Exception e) {
-                      return "Error con IA. Revisa internet o la clave Gemini. Detalle: " + e.getMessage();
+                      return "Error con IA. Revisa internet, clave OpenAI o saldo. Detalle: " + e.getMessage();
                   }
               }
 
@@ -526,7 +525,7 @@ jobs:
 
       - name: Build APK
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: gradle assembleDebug --stacktrace
 
       - name: Upload APK
