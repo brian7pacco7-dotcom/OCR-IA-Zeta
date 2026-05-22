@@ -13,24 +13,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      - name: Setup Android
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: 8.7
+          gradle-version: 8.9
 
       - name: Create Android project
         run: |
           mkdir -p app/src/main/java/com/geozeta/ocria
-          mkdir -p app/src/main/res/mipmap-hdpi
           mkdir -p app/src/main/res/values
 
           cat > settings.gradle <<'EOF'
@@ -41,6 +40,7 @@ jobs:
                   gradlePluginPortal()
               }
           }
+
           dependencyResolutionManagement {
               repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
               repositories {
@@ -48,20 +48,29 @@ jobs:
                   mavenCentral()
               }
           }
+
           rootProject.name = "OCRIAZeta"
           include ':app'
           EOF
 
           cat > build.gradle <<'EOF'
           plugins {
-              id 'com.android.application' version '8.5.2' apply false
+              id 'com.android.application' version '8.7.3' apply false
           }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          android.useAndroidX=true
+          android.nonTransitiveRClass=false
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
           EOF
 
           cat > app/build.gradle <<'EOF'
           plugins {
               id 'com.android.application'
           }
+
+          def geminiKey = System.getenv("GEMINI_API_KEY") ?: ""
 
           android {
               namespace 'com.geozeta.ocria'
@@ -73,16 +82,21 @@ jobs:
                   targetSdk 35
                   versionCode 1
                   versionName '1.0'
-                  buildConfigField "String", "GEMINI_API_KEY", "\"${System.getenv("GEMINI_API_KEY") ?: ""}\""
+                  buildConfigField "String", "GEMINI_API_KEY", "\"${geminiKey}\""
               }
 
               buildFeatures {
                   buildConfig true
               }
+
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
           }
 
           dependencies {
-              implementation 'com.google.mlkit:text-recognition:16.0.1'
+              implementation 'com.google.android.gms:play-services-mlkit-text-recognition:19.0.1'
           }
           EOF
 
@@ -92,8 +106,21 @@ jobs:
           </resources>
           EOF
 
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <resources>
+              <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:windowLightStatusBar">true</item>
+                  <item name="android:statusBarColor">#FFFFFF</item>
+                  <item name="android:navigationBarColor">#FFFFFF</item>
+                  <item name="android:colorAccent">#0B3D91</item>
+              </style>
+          </resources>
+          EOF
+
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
               <uses-permission android:name="android.permission.CAMERA"/>
               <uses-permission android:name="android.permission.INTERNET"/>
               <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
@@ -103,27 +130,23 @@ jobs:
                   android:theme="@style/AppTheme"
                   android:label="OCR IA Zeta"
                   android:allowBackup="true"
-                  android:usesCleartextTraffic="true">
+                  android:usesCleartextTraffic="true"
+                  android:resizeableActivity="true">
+
                   <activity
                       android:name=".MainActivity"
                       android:exported="true">
+
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN"/>
                           <category android:name="android.intent.category.LAUNCHER"/>
                       </intent-filter>
-                  </activity>
-              </application>
-          </manifest>
-          EOF
 
-          cat > app/src/main/res/values/styles.xml <<'EOF'
-          <resources>
-              <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
-                  <item name="android:fontFamily">sans</item>
-                  <item name="android:windowLightStatusBar">true</item>
-                  <item name="android:colorAccent">#0B3D91</item>
-              </style>
-          </resources>
+                  </activity>
+
+              </application>
+
+          </manifest>
           EOF
 
           cat > app/src/main/java/com/geozeta/ocria/MainActivity.java <<'EOF'
@@ -168,18 +191,19 @@ jobs:
           import java.nio.charset.StandardCharsets;
 
           public class MainActivity extends Activity {
+
               private static final int PICK_IMAGE = 100;
               private static final int TAKE_PHOTO = 200;
 
               private Bitmap currentBitmap;
+              private ImageView imagePreview;
               private TextView ocrText;
               private TextView answerText;
-              private ImageView imagePreview;
               private ProgressBar progress;
 
               @Override
-              protected void onCreate(Bundle b) {
-                  super.onCreate(b);
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
 
                   if (Build.VERSION.SDK_INT >= 23) {
                       requestPermissions(new String[]{
@@ -190,6 +214,7 @@ jobs:
                   }
 
                   ScrollView scroll = new ScrollView(this);
+
                   LinearLayout root = new LinearLayout(this);
                   root.setOrientation(LinearLayout.VERTICAL);
                   root.setPadding(32, 36, 32, 36);
@@ -198,17 +223,26 @@ jobs:
 
                   TextView title = new TextView(this);
                   title.setText("OCR IA Zeta");
-                  title.setTextSize(26);
+                  title.setTextSize(28);
                   title.setGravity(Gravity.CENTER);
                   title.setTextColor(0xFF0B3D91);
-                  title.setPadding(0, 0, 0, 24);
+                  title.setPadding(0, 0, 0, 10);
                   root.addView(title);
 
-                  Button cameraBtn = button("Tomar foto");
-                  Button galleryBtn = button("Importar imagen");
-                  Button ocrBtn = button("Extraer texto OCR");
-                  Button aiBtn = button("Responder con IA");
-                  Button copyBtn = button("Copiar respuesta");
+                  TextView subtitle = new TextView(this);
+                  subtitle.setText("Foto o imagen → OCR → respuesta con IA");
+                  subtitle.setTextSize(15);
+                  subtitle.setGravity(Gravity.CENTER);
+                  subtitle.setTextColor(0xFF444444);
+                  subtitle.setPadding(0, 0, 0, 24);
+                  root.addView(subtitle);
+
+                  Button cameraBtn = makeButton("Tomar foto");
+                  Button galleryBtn = makeButton("Importar imagen");
+                  Button ocrBtn = makeButton("Extraer texto OCR");
+                  Button aiBtn = makeButton("Responder con IA");
+                  Button copyTextBtn = makeButton("Copiar texto OCR");
+                  Button copyAnswerBtn = makeButton("Copiar respuesta");
 
                   root.addView(cameraBtn);
                   root.addView(galleryBtn);
@@ -225,131 +259,159 @@ jobs:
                   progress.setVisibility(View.GONE);
                   root.addView(progress);
 
-                  TextView ocrLabel = label("Texto detectado:");
-                  root.addView(ocrLabel);
+                  root.addView(makeLabel("Texto detectado:"));
 
-                  ocrText = textBox("Aquí aparecerá el texto OCR.");
+                  ocrText = makeBox("Aquí aparecerá el texto reconocido.");
                   root.addView(ocrText);
 
+                  root.addView(copyTextBtn);
                   root.addView(aiBtn);
 
-                  TextView ansLabel = label("Respuesta IA:");
-                  root.addView(ansLabel);
+                  root.addView(makeLabel("Respuesta IA:"));
 
-                  answerText = textBox("Aquí aparecerá la respuesta.");
+                  answerText = makeBox("Aquí aparecerá la respuesta.");
                   root.addView(answerText);
 
-                  root.addView(copyBtn);
+                  root.addView(copyAnswerBtn);
 
                   cameraBtn.setOnClickListener(v -> openCamera());
                   galleryBtn.setOnClickListener(v -> openGallery());
                   ocrBtn.setOnClickListener(v -> runOCR());
                   aiBtn.setOnClickListener(v -> askAI());
-                  copyBtn.setOnClickListener(v -> copyAnswer());
+                  copyTextBtn.setOnClickListener(v -> copyToClipboard("Texto OCR", ocrText.getText().toString()));
+                  copyAnswerBtn.setOnClickListener(v -> copyToClipboard("Respuesta IA", answerText.getText().toString()));
 
                   setContentView(scroll);
               }
 
-              private Button button(String text) {
-                  Button b = new Button(this);
-                  b.setText(text);
-                  b.setTextSize(18);
-                  b.setAllCaps(false);
-                  b.setPadding(8, 12, 8, 12);
-                  return b;
+              private Button makeButton(String text) {
+                  Button button = new Button(this);
+                  button.setText(text);
+                  button.setTextSize(18);
+                  button.setAllCaps(false);
+                  button.setPadding(8, 14, 8, 14);
+                  return button;
               }
 
-              private TextView label(String text) {
-                  TextView v = new TextView(this);
-                  v.setText(text);
-                  v.setTextSize(18);
-                  v.setTextColor(0xFF222222);
-                  v.setPadding(0, 24, 0, 8);
-                  return v;
+              private TextView makeLabel(String text) {
+                  TextView label = new TextView(this);
+                  label.setText(text);
+                  label.setTextSize(18);
+                  label.setTextColor(0xFF111111);
+                  label.setPadding(0, 24, 0, 8);
+                  return label;
               }
 
-              private TextView textBox(String text) {
-                  TextView v = new TextView(this);
-                  v.setText(text);
-                  v.setTextSize(16);
-                  v.setTextColor(0xFF111111);
-                  v.setPadding(18, 18, 18, 18);
-                  v.setBackgroundColor(0xFFEFEFEF);
-                  return v;
+              private TextView makeBox(String text) {
+                  TextView box = new TextView(this);
+                  box.setText(text);
+                  box.setTextSize(16);
+                  box.setTextColor(0xFF111111);
+                  box.setPadding(20, 20, 20, 20);
+                  box.setBackgroundColor(0xFFEFEFEF);
+                  box.setMinLines(4);
+                  return box;
               }
 
               private void openGallery() {
-                  Intent i = new Intent(Intent.ACTION_GET_CONTENT);
-                  i.setType("image/*");
-                  startActivityForResult(Intent.createChooser(i, "Selecciona imagen"), PICK_IMAGE);
+                  Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                  intent.setType("image/*");
+                  startActivityForResult(Intent.createChooser(intent, "Selecciona imagen"), PICK_IMAGE);
               }
 
               private void openCamera() {
-                  Intent i = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
-                  startActivityForResult(i, TAKE_PHOTO);
+                  Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+                  startActivityForResult(intent, TAKE_PHOTO);
               }
 
               @Override
               protected void onActivityResult(int requestCode, int resultCode, Intent data) {
                   super.onActivityResult(requestCode, resultCode, data);
-                  if (resultCode != RESULT_OK || data == null) return;
+
+                  if (resultCode != RESULT_OK || data == null) {
+                      return;
+                  }
 
                   try {
                       if (requestCode == PICK_IMAGE) {
                           Uri uri = data.getData();
+
+                          if (uri == null) {
+                              showToast("No se pudo leer la imagen");
+                              return;
+                          }
+
                           if (Build.VERSION.SDK_INT >= 28) {
                               ImageDecoder.Source source = ImageDecoder.createSource(getContentResolver(), uri);
                               currentBitmap = ImageDecoder.decodeBitmap(source);
                           } else {
                               currentBitmap = MediaStore.Images.Media.getBitmap(getContentResolver(), uri);
                           }
+
                       } else if (requestCode == TAKE_PHOTO) {
                           Bundle extras = data.getExtras();
+
+                          if (extras == null || extras.get("data") == null) {
+                              showToast("No se pudo tomar la foto");
+                              return;
+                          }
+
                           currentBitmap = (Bitmap) extras.get("data");
                       }
 
-                      imagePreview.setImageBitmap(currentBitmap);
-                      Toast.makeText(this, "Imagen cargada", Toast.LENGTH_SHORT).show();
+                      if (currentBitmap != null) {
+                          currentBitmap = currentBitmap.copy(Bitmap.Config.ARGB_8888, true);
+                          imagePreview.setImageBitmap(currentBitmap);
+                          ocrText.setText("Imagen cargada. Presiona: Extraer texto OCR.");
+                          answerText.setText("Aquí aparecerá la respuesta.");
+                          showToast("Imagen cargada");
+                      }
+
                   } catch (Exception e) {
-                      Toast.makeText(this, "Error al cargar imagen", Toast.LENGTH_LONG).show();
+                      showToast("Error al cargar imagen");
                   }
               }
 
               private void runOCR() {
                   if (currentBitmap == null) {
-                      Toast.makeText(this, "Primero toma o importa una imagen", Toast.LENGTH_SHORT).show();
+                      showToast("Primero toma o importa una imagen");
                       return;
                   }
 
                   progress.setVisibility(View.VISIBLE);
+                  ocrText.setText("Leyendo texto...");
+
                   InputImage image = InputImage.fromBitmap(currentBitmap, 0);
                   TextRecognizer recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
 
                   recognizer.process(image)
                           .addOnSuccessListener(result -> {
                               progress.setVisibility(View.GONE);
+
                               String text = result.getText();
-                              if (text.trim().isEmpty()) {
-                                  ocrText.setText("No se detectó texto. Toma una foto más clara.");
+
+                              if (text == null || text.trim().isEmpty()) {
+                                  ocrText.setText("No se detectó texto. Toma una foto más clara, con buena luz y sin movimiento.");
                               } else {
-                                  ocrText.setText(text);
+                                  ocrText.setText(text.trim());
                               }
                           })
                           .addOnFailureListener(e -> {
                               progress.setVisibility(View.GONE);
-                              ocrText.setText("Error OCR: " + e.getMessage());
+                              ocrText.setText("Error OCR. Intenta con otra imagen más clara.");
                           });
               }
 
               private void askAI() {
                   String text = ocrText.getText().toString().trim();
-                  if (text.isEmpty() || text.startsWith("Aquí")) {
-                      Toast.makeText(this, "Primero extrae texto OCR", Toast.LENGTH_SHORT).show();
+
+                  if (text.isEmpty() || text.startsWith("Aquí") || text.startsWith("Imagen cargada") || text.startsWith("No se detectó")) {
+                      showToast("Primero extrae texto OCR");
                       return;
                   }
 
                   if (BuildConfig.GEMINI_API_KEY == null || BuildConfig.GEMINI_API_KEY.trim().isEmpty()) {
-                      answerText.setText("Falta configurar GEMINI_API_KEY en GitHub Secrets. El OCR funciona, pero la IA necesita esa clave e internet.");
+                      answerText.setText("La app ya tiene OCR, pero falta configurar la clave GEMINI_API_KEY en GitHub Secrets para que responda la IA. La IA necesita internet.");
                       return;
                   }
 
@@ -358,6 +420,7 @@ jobs:
 
                   new Thread(() -> {
                       String response = callGemini(text);
+
                       runOnUiThread(() -> {
                           progress.setVisibility(View.GONE);
                           answerText.setText(response);
@@ -367,10 +430,14 @@ jobs:
 
               private String callGemini(String userText) {
                   try {
-                      String apiKey = BuildConfig.GEMINI_API_KEY;
-                      String endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + apiKey;
+                      String endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + BuildConfig.GEMINI_API_KEY;
 
-                      String prompt = "Responde en español, claro, directo y útil. Si es una pregunta, da la respuesta. Si es ejercicio, da procedimiento y resultado. Si el texto está incompleto, dilo sin inventar. Texto OCR: " + userText;
+                      String prompt =
+                              "Responde en español, claro, directo y útil. " +
+                              "Si el texto es una pregunta, responde directo. " +
+                              "Si es un ejercicio, muestra procedimiento corto y resultado. " +
+                              "Si el texto está borroso, incompleto o no se entiende, dilo sin inventar. " +
+                              "Texto OCR: " + userText;
 
                       JSONObject part = new JSONObject();
                       part.put("text", prompt);
@@ -388,48 +455,64 @@ jobs:
                       body.put("contents", contents);
 
                       URL url = new URL(endpoint);
-                      HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                      conn.setRequestMethod("POST");
-                      conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-                      conn.setDoOutput(true);
+                      HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+                      connection.setRequestMethod("POST");
+                      connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+                      connection.setDoOutput(true);
+                      connection.setConnectTimeout(20000);
+                      connection.setReadTimeout(30000);
 
-                      OutputStream os = conn.getOutputStream();
+                      OutputStream os = connection.getOutputStream();
                       os.write(body.toString().getBytes(StandardCharsets.UTF_8));
                       os.close();
 
                       BufferedReader br = new BufferedReader(new InputStreamReader(
-                              conn.getResponseCode() >= 400 ? conn.getErrorStream() : conn.getInputStream()
+                              connection.getResponseCode() >= 400
+                                      ? connection.getErrorStream()
+                                      : connection.getInputStream()
                       ));
 
                       StringBuilder sb = new StringBuilder();
                       String line;
-                      while ((line = br.readLine()) != null) sb.append(line);
+
+                      while ((line = br.readLine()) != null) {
+                          sb.append(line);
+                      }
+
                       br.close();
 
                       JSONObject json = new JSONObject(sb.toString());
+
                       return json.getJSONArray("candidates")
                               .getJSONObject(0)
                               .getJSONObject("content")
                               .getJSONArray("parts")
                               .getJSONObject(0)
-                              .getString("text");
+                              .getString("text")
+                              .trim();
 
                   } catch (Exception e) {
                       return "Error con IA. Revisa internet o la clave Gemini. Detalle: " + e.getMessage();
                   }
               }
 
-              private void copyAnswer() {
+              private void copyToClipboard(String label, String text) {
                   ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                  ClipData clip = ClipData.newPlainText("Respuesta OCR IA Zeta", answerText.getText().toString());
+                  ClipData clip = ClipData.newPlainText(label, text);
                   clipboard.setPrimaryClip(clip);
-                  Toast.makeText(this, "Respuesta copiada", Toast.LENGTH_SHORT).show();
+                  showToast("Copiado");
+              }
+
+              private void showToast(String message) {
+                  Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
               }
           }
           EOF
 
       - name: Build APK
-        run: gradle assembleDebug
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: gradle assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
